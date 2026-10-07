@@ -1,0 +1,137 @@
+version: '3.8'
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - observability
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-observability}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    pid: host
+    network_mode: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./config/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - observability
+    restart: unless-stopped
+
+  demo-01:
+    build: ./app/demo-service
+    container_name: demo-01
+    ports:
+      - "${DEMO_SERVICE_01_PORT:-8081}:3000"
+    environment:
+      - SERVICE_NAME=demo-01
+      - HEALTH_STATUS=200
+      - RESPONSE_DELAY=0
+    networks:
+      - observability
+    restart: unless-stopped
+
+  demo-02:
+    build: ./app/demo-service
+    container_name: demo-02
+    ports:
+      - "${DEMO_SERVICE_02_PORT:-8082}:3000"
+    environment:
+      - SERVICE_NAME=demo-02
+      - HEALTH_STATUS=200
+      - RESPONSE_DELAY=0
+    networks:
+      - observability
+    restart: unless-stopped
+
+  demo-03:
+    build: ./app/demo-service
+    container_name: demo-03
+    ports:
+      - "${DEMO_SERVICE_03_PORT:-8083}:3000"
+    environment:
+      - SERVICE_NAME=demo-03
+      - HEALTH_STATUS=200
+      - RESPONSE_DELAY=0
+    networks:
+      - observability
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    volumes:
+      - ./config/alloy/config.alloy:/etc/alloy/config.alloy:ro
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - loki
