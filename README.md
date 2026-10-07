@@ -102,7 +102,7 @@ Each demo service exposes:
 - [Alert Rules](docs/alerts.md) — All configured alerts with PromQL
 - [Incident Runbooks](docs/incidents.md) — Step-by-step incident guides
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and fixes
-- [AI Agents](AGENTS.md) — Integrating Claude/LLMs with this lab
+- [LLM Integrations](docs/llm-integrations.md) — Integrating Claude/LLMs with this lab
 
 ## Management Scripts
 

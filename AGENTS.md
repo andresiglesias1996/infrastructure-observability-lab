@@ -1,175 +1,70 @@
-# Using AI Agents with this Observability Lab
+# Infrastructure Observability Lab — Agent Instructions
 
-This lab is designed to integrate with AI agents for intelligent monitoring and incident response.
+Guidelines for AI agents working in this repository.
 
-## Patterns
+## What this repo is
 
-### 1. Analyzing Prometheus Query Results with Claude
+A Docker-based observability lab with Prometheus, Grafana, Loki, Blackbox Exporter, Node Exporter, and three instrumented Node.js demo services. Used to practice monitoring, alerting, and incident response.
 
-Use the Claude API to analyze PromQL query results and generate human-readable summaries:
+## Stack
 
-```python
-import anthropic
-import requests
+- **Prometheus** → `config/prometheus/prometheus.yml` and `config/prometheus/rules/`
+- **Grafana** → `config/grafana/provisioning/`
+- **Loki + Alloy** → `config/alloy/config.alloy`
+- **Blackbox Exporter** → `config/blackbox/blackbox.yml`
+- **Demo services** → `app/demo-service/` (shared image, 3 instances)
+- **Incident scenarios** → `scenarios/`
+- **Management scripts** → `scripts/`
 
-client = anthropic.Anthropic()
+## Running the lab
 
-def analyze_metrics(promql_query: str) -> str:
-    # Query Prometheus
-    response = requests.get(
-        "http://localhost:9090/api/v1/query",
-        params={"query": promql_query}
-    )
-    data = response.json()
-
-    # Ask Claude to analyze
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": f"Analyze these Prometheus metrics and explain what they indicate about system health:\n\n{data}"
-        }]
-    )
-    return message.content[0].text
-
-# Example usage
-analysis = analyze_metrics('rate(http_requests_total{status=~"5.."}[5m])')
-print(analysis)
+```bash
+docker compose up -d        # start everything
+docker compose ps           # check status
+docker compose logs -f      # follow logs
+docker compose down         # stop (preserves volumes)
+docker compose down -v      # stop and wipe data
 ```
 
-### 2. Generating PromQL Queries via AI
+Services need Docker Desktop running. Check with `docker ps` before assuming anything is up.
 
-Let Claude help you write complex PromQL queries:
+## Key endpoints (when running)
 
-```python
-def generate_promql(description: str) -> str:
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=512,
-        messages=[{
-            "role": "user",
-            "content": f"""Generate a PromQL query for: {description}
+| Service | URL |
+|---------|-----|
+| Grafana | http://localhost:3000 (admin / observability) |
+| Prometheus | http://localhost:9090 |
+| Demo-01/02/03 | http://localhost:8081-8083 |
+| Blackbox | http://localhost:9115 |
+| Node Exporter | http://localhost:9100 |
+| Loki | http://localhost:3100 |
 
-Available metrics from this lab:
-- node_cpu_seconds_total (labels: mode, cpu)
-- node_memory_MemAvailable_bytes, node_memory_MemTotal_bytes
-- node_filesystem_avail_bytes, node_filesystem_size_bytes (labels: mountpoint)
-- http_requests_total (labels: method, path, status, service)
-- http_request_duration_seconds (histogram)
-- probe_success (labels: job, instance)
-- probe_duration_seconds (labels: job, instance)
+## Demo service control API
 
-Return only the PromQL expression, no explanation."""
-        }]
-    )
-    return message.content[0].text
+```bash
+# Inject 500 errors + 2s latency
+curl -X POST http://localhost:8081/control \
+  -H "Content-Type: application/json" \
+  -d '{"status": 500, "delay": 2000}'
 
-query = generate_promql("CPU usage percentage averaged over 5 minutes")
-print(query)
+# Restore normal behavior
+curl -X POST http://localhost:8081/control \
+  -H "Content-Type: application/json" \
+  -d '{"status": 200, "delay": 0}'
 ```
 
-### 3. MCP Server for Prometheus
+## MCP servers
 
-Connect Prometheus to Claude Code via MCP:
+Prometheus and Grafana MCP servers are configured in `.claude/mcp.json`. When the lab is running you can query Prometheus and Grafana directly from Claude Code.
 
-```json
-// .claude/mcp.json
-{
-  "mcpServers": {
-    "prometheus": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-prometheus"],
-      "env": {
-        "PROMETHEUS_URL": "http://localhost:9090"
-      }
-    }
-  }
-}
-```
+## LLM integration patterns
 
-Then in Claude Code:
-```
-Query Prometheus for the current error rate on demo-01
-```
+See `.claude/skills/observability.md` for Python patterns: metric analysis, PromQL generation, alert correlation, and incident report generation.
 
-### 4. MCP Server for Grafana
+## Docs
 
-```json
-{
-  "mcpServers": {
-    "grafana": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-grafana"],
-      "env": {
-        "GRAFANA_URL": "http://localhost:3000",
-        "GRAFANA_TOKEN": "your-service-account-token"
-      }
-    }
-  }
-}
-```
-
-### 5. Alert Correlation with LLMs
-
-When multiple alerts fire simultaneously, use AI to identify the root cause:
-
-```python
-def correlate_alerts(firing_alerts: list[dict]) -> str:
-    alert_summary = "\n".join([
-        f"- {a['labels']['alertname']}: {a['annotations'].get('description', '')}"
-        for a in firing_alerts
-    ])
-
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": f"""Multiple alerts fired at the same time. Identify the likely root cause:
-
-{alert_summary}
-
-Provide:
-1. Most likely root cause
-2. Recommended investigation steps
-3. Suggested remediation"""
-        }]
-    )
-    return message.content[0].text
-```
-
-### 6. Automated Incident Reports
-
-Generate incident reports from Grafana and Loki data:
-
-```python
-def generate_incident_report(service: str, start_time: str, end_time: str) -> str:
-    # Fetch metrics during incident window
-    metrics = requests.get(
-        "http://localhost:9090/api/v1/query_range",
-        params={
-            "query": f'http_requests_total{{service="{service}"}}',
-            "start": start_time,
-            "end": end_time,
-            "step": "60"
-        }
-    ).json()
-
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": f"Generate a formal incident report for service {service} based on these metrics: {metrics}"
-        }]
-    )
-    return message.content[0].text
-```
-
-## Resources
-
-- [Anthropic API Docs](https://docs.anthropic.com)
-- [Claude Code MCP Guide](https://docs.anthropic.com/en/docs/claude-code/mcp)
-- [Grafana Incident AI](https://grafana.com/docs/grafana-cloud/incident/)
-- [Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/)
+- `docs/architecture.md` — data flow diagrams
+- `docs/alerts.md` — all configured alert rules with PromQL
+- `docs/incidents.md` — incident runbooks
+- `docs/troubleshooting.md` — common issues
+- `docs/llm-integrations.md` — LLM/Claude integration reference
